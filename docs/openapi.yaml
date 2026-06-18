@@ -1,0 +1,865 @@
+openapi: 3.0.3
+info:
+  title: Demo Medical App API
+  description: |
+    A RESTful API for managing medical records, patients, and prescriptions.
+
+    ## Authentication
+    All protected endpoints require a JWT Bearer token obtained via `POST /api/auth/login`.
+    Tokens are issued by `demo-medical-app` and expire after **8 hours** (one medical shift).
+
+    ## Rate Limiting
+    - **Auth endpoints** (`/api/auth/*`): 10 requests per 15 minutes
+    - **All other endpoints**: 100 requests per 15 minutes
+
+    Rate limit headers are included in every response:
+    - `RateLimit-Limit` — request limit for the window
+    - `RateLimit-Remaining` — requests remaining in the current window
+    - `RateLimit-Reset` — seconds until the window resets
+
+    ## Roles
+    | Role    | Capabilities |
+    |---------|-------------|
+    | `doctor` | Manage own assigned patients and prescriptions |
+    | `nurse`  | Same access as doctor (own patients only) |
+    | `admin`  | Full access to all patients; only role that can delete patients |
+
+    ## Security Headers
+    All responses include the following security headers (via Helmet):
+    - `X-Content-Type-Options: nosniff`
+    - `X-Frame-Options: SAMEORIGIN`
+    - `Strict-Transport-Security: max-age=15552000; includeSubDomains`
+    - `Content-Security-Policy: default-src 'self'`
+  version: 1.0.0
+  contact:
+    name: Demo Medical App
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+
+tags:
+  - name: Authentication
+    description: User registration and login endpoints
+  - name: Patients
+    description: Patient record management
+  - name: Prescriptions
+    description: Prescription management
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token obtained from `POST /api/auth/login`.
+        Tokens expire after 8 hours. Include as: `Authorization: Bearer <token>`
+
+  schemas:
+    Patient:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 42
+        first_name:
+          type: string
+          example: "Margaret"
+        last_name:
+          type: string
+          example: "Chen"
+        date_of_birth:
+          type: string
+          format: date
+          example: "1978-04-15"
+        diagnosis:
+          type: string
+          nullable: true
+          example: "Type 2 Diabetes Mellitus"
+        assigned_doctor_id:
+          type: integer
+          example: 7
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-06-01T09:23:11.000Z"
+      required:
+        - id
+        - first_name
+        - last_name
+        - date_of_birth
+        - assigned_doctor_id
+        - created_at
+
+    Prescription:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 15
+        patient_id:
+          type: integer
+          example: 42
+        doctor_id:
+          type: integer
+          example: 7
+        medication:
+          type: string
+          example: "Metformin"
+        dosage:
+          type: string
+          example: "500mg twice daily"
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-06-01T10:05:33.000Z"
+      required:
+        - id
+        - patient_id
+        - doctor_id
+        - medication
+        - dosage
+        - created_at
+
+    User:
+      type: object
+      properties:
+        userId:
+          type: integer
+          example: 7
+        message:
+          type: string
+          example: "User registered."
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "An error occurred."
+      required:
+        - error
+
+    ValidationError:
+      type: object
+      properties:
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              msg:
+                type: string
+                example: "Password must be at least 12 characters"
+              param:
+                type: string
+                example: "password"
+              location:
+                type: string
+                example: "body"
+      required:
+        - errors
+
+    RegisterRequest:
+      type: object
+      required:
+        - username
+        - password
+        - role
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 30
+          pattern: "^[a-zA-Z0-9]+$"
+          example: "drjwilliams"
+          description: "Alphanumeric characters only, 3–30 characters"
+        password:
+          type: string
+          minLength: 12
+          example: "Secure#Pass1234"
+          description: "Minimum 12 characters; must contain at least one number and one symbol"
+        role:
+          type: string
+          enum:
+            - doctor
+            - nurse
+            - admin
+          example: "doctor"
+
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: "drjwilliams"
+        password:
+          type: string
+          example: "Secure#Pass1234"
+
+    CreatePatientRequest:
+      type: object
+      required:
+        - first_name
+        - last_name
+        - date_of_birth
+        - ssn
+      properties:
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: "Margaret"
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: "Chen"
+        date_of_birth:
+          type: string
+          format: date
+          example: "1978-04-15"
+          description: "ISO 8601 date format (YYYY-MM-DD)"
+        ssn:
+          type: string
+          pattern: "^\\d{3}-\\d{2}-\\d{4}$"
+          example: "123-45-6789"
+          description: "Social Security Number in NNN-NN-NNNN format. Hashed with bcrypt before storage — never stored or returned in plaintext."
+        diagnosis:
+          type: string
+          maxLength: 500
+          nullable: true
+          example: "Type 2 Diabetes Mellitus"
+          description: "Optional initial diagnosis"
+        assigned_doctor_id:
+          type: integer
+          nullable: true
+          example: 7
+          description: "Admin only. If omitted, defaults to the calling user's ID."
+
+    UpdatePatientRequest:
+      type: object
+      description: "All fields are optional. At least one must be provided."
+      properties:
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: "Maggie"
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: "Chen-Roberts"
+        date_of_birth:
+          type: string
+          format: date
+          example: "1978-04-15"
+        diagnosis:
+          type: string
+          maxLength: 500
+          nullable: true
+          example: "Type 2 Diabetes Mellitus, Hypertension"
+        ssn:
+          type: string
+          pattern: "^\\d{3}-\\d{2}-\\d{4}$"
+          example: "123-45-6789"
+          description: "Re-hashed if provided"
+
+    CreatePrescriptionRequest:
+      type: object
+      required:
+        - patient_id
+        - medication
+        - dosage
+      properties:
+        patient_id:
+          type: integer
+          example: 42
+        medication:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: "Metformin"
+        dosage:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: "500mg twice daily"
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "No token provided."
+
+    Forbidden:
+      description: Authenticated but insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Access denied."
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Patient not found."
+
+    TooManyRequests:
+      description: Rate limit exceeded
+      headers:
+        RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit for the window
+        RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Requests remaining in current window
+        RateLimit-Reset:
+          schema:
+            type: integer
+          description: Seconds until window resets
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Too many requests. Please try again later."
+
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+          example:
+            errors:
+              - msg: "Password must be at least 12 characters"
+                param: "password"
+                location: "body"
+
+paths:
+  /api/auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new user
+      description: |
+        Create a new user account with a specified role.
+
+        **Rate limit:** 10 requests per 15 minutes (auth limit)
+
+        **No authentication required.**
+
+        Usernames must be alphanumeric (3–30 characters). Passwords must be at
+        least 12 characters and contain at least one number and one symbol.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              username: "drjwilliams"
+              password: "Secure#Pass1234"
+              role: "doctor"
+      responses:
+        '201':
+          description: User successfully registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              example:
+                message: "User registered."
+                userId: 7
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          description: Username already taken
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Username already exists."
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Login and obtain a JWT token
+      description: |
+        Authenticate with username and password to receive a JWT Bearer token.
+
+        **Rate limit:** 10 requests per 15 minutes (auth limit)
+
+        **No authentication required.**
+
+        Tokens expire after **8 hours** and are issued by `demo-medical-app`.
+        Store securely and include in subsequent requests as `Authorization: Bearer <token>`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              username: "drjwilliams"
+              password: "Secure#Pass1234"
+      responses:
+        '200':
+          description: Login successful — JWT returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjcsInJvbGUiOiJkb2N0b3IiLCJpYXQiOjE3MTg3MjAwMDAsImV4cCI6MTcxODc0ODgwMH0.example"
+              example:
+                token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjcsInJvbGUiOiJkb2N0b3IiLCJpYXQiOjE3MTg3MjAwMDAsImV4cCI6MTcxODc0ODgwMH0.example"
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Invalid credentials."
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/patients:
+    get:
+      tags:
+        - Patients
+      summary: List patients
+      description: |
+        Returns a list of patients accessible to the authenticated user.
+
+        **Rate limit:** 100 requests per 15 minutes
+
+        **Role behavior:**
+        - `doctor` / `nurse`: Returns only patients assigned to the calling user
+        - `admin`: Returns all patients in the system
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of patients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Patient'
+              example:
+                - id: 42
+                  first_name: "Margaret"
+                  last_name: "Chen"
+                  date_of_birth: "1978-04-15"
+                  diagnosis: "Type 2 Diabetes Mellitus"
+                  assigned_doctor_id: 7
+                  created_at: "2026-06-01T09:23:11.000Z"
+                - id: 43
+                  first_name: "Robert"
+                  last_name: "Okonkwo"
+                  date_of_birth: "1965-11-30"
+                  diagnosis: null
+                  assigned_doctor_id: 7
+                  created_at: "2026-06-03T14:10:05.000Z"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+    post:
+      tags:
+        - Patients
+      summary: Create a new patient
+      description: |
+        Create a new patient record.
+
+        **Rate limit:** 100 requests per 15 minutes
+
+        **SSN handling:** The SSN is hashed with bcrypt before storage. It is never
+        stored or returned in plaintext. This field is write-only.
+
+        **assigned_doctor_id:** Admin users may specify any doctor's ID. For
+        `doctor` and `nurse` roles, this field is ignored and automatically set
+        to the calling user's ID.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePatientRequest'
+            example:
+              first_name: "Margaret"
+              last_name: "Chen"
+              date_of_birth: "1978-04-15"
+              ssn: "123-45-6789"
+              diagnosis: "Type 2 Diabetes Mellitus"
+              assigned_doctor_id: 7
+      responses:
+        '201':
+          description: Patient created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  patientId:
+                    type: integer
+              example:
+                message: "Patient created."
+                patientId: 42
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/patients/search:
+    get:
+      tags:
+        - Patients
+      summary: Search patients by name
+      description: |
+        Search for patients by first or last name (case-insensitive substring match).
+
+        **Rate limit:** 100 requests per 15 minutes
+
+        **Role behavior:**
+        - `doctor` / `nurse`: Searches only among their assigned patients
+        - `admin`: Searches all patients
+
+        > ⚠️ **Note:** This route must be resolved before `GET /api/patients/:id`
+        > in client-side routing to avoid `search` being interpreted as a numeric ID.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+          description: "Name fragment to search for (case-insensitive)"
+          example: "chen"
+      responses:
+        '200':
+          description: Matching patients (no ssn_hash field)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Patient'
+              example:
+                - id: 42
+                  first_name: "Margaret"
+                  last_name: "Chen"
+                  date_of_birth: "1978-04-15"
+                  diagnosis: "Type 2 Diabetes Mellitus"
+                  assigned_doctor_id: 7
+                  created_at: "2026-06-01T09:23:11.000Z"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/patients/{id}:
+    get:
+      tags:
+        - Patients
+      summary: Get a patient by ID
+      description: |
+        Retrieve a single patient record by their integer ID.
+
+        **Rate limit:** 100 requests per 15 minutes
+
+        **Access control:** A `doctor` or `nurse` can only access patients assigned
+        to them. Admins can access any patient.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Patient ID
+          example: 42
+      responses:
+        '200':
+          description: Patient record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+              example:
+                id: 42
+                first_name: "Margaret"
+                last_name: "Chen"
+                date_of_birth: "1978-04-15"
+                diagnosis: "Type 2 Diabetes Mellitus"
+                assigned_doctor_id: 7
+                created_at: "2026-06-01T09:23:11.000Z"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+    put:
+      tags:
+        - Patients
+      summary: Update a patient record
+      description: |
+        Partially update a patient record. All body fields are optional, but at
+        least one must be provided.
+
+        **Rate limit:** 100 requests per 15 minutes
+
+        **Access control:** Same ownership rules as `GET /api/patients/:id`.
+
+        **SSN:** If provided, the new value is hashed with bcrypt before storage.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Patient ID
+          example: 42
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePatientRequest'
+            example:
+              diagnosis: "Type 2 Diabetes Mellitus, Hypertension"
+      responses:
+        '200':
+          description: Patient updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+              example:
+                message: "Patient updated."
+        '400':
+          description: No valid fields provided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "No valid fields to update."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+    delete:
+      tags:
+        - Patients
+      summary: Delete a patient record
+      description: |
+        Permanently delete a patient and all associated records.
+
+        **Rate limit:** 100 requests per 15 minutes
+
+        **Admin only.** `doctor` and `nurse` roles will receive a 403 response.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Patient ID
+          example: 42
+      responses:
+        '200':
+          description: Patient deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+              example:
+                message: "Patient deleted."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Admin role required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Admin role required."
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/prescriptions:
+    post:
+      tags:
+        - Prescriptions
+      summary: Create a prescription
+      description: |
+        Create a new prescription for a patient.
+
+        **Rate limit:** 100 requests per 15 minutes
+
+        **Access control:** The calling user must be the assigned doctor for the
+        patient, or have admin role. The prescription is recorded under the
+        calling user's `doctor_id`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePrescriptionRequest'
+            example:
+              patient_id: 42
+              medication: "Metformin"
+              dosage: "500mg twice daily"
+      responses:
+        '201':
+          description: Prescription created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  prescriptionId:
+                    type: integer
+              example:
+                message: "Prescription created."
+                prescriptionId: 15
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Patient not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Patient not found."
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/prescriptions/patient/{patientId}:
+    get:
+      tags:
+        - Prescriptions
+      summary: List prescriptions for a patient
+      description: |
+        Retrieve all prescriptions for a given patient.
+
+        **Rate limit:** 100 requests per 15 minutes
+
+        **Access control:** The calling user must be the assigned doctor for the
+        patient, or have admin role.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Patient ID
+          example: 42
+      responses:
+        '200':
+          description: List of prescriptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Prescription'
+              example:
+                - id: 15
+                  patient_id: 42
+                  doctor_id: 7
+                  medication: "Metformin"
+                  dosage: "500mg twice daily"
+                  created_at: "2026-06-01T10:05:33.000Z"
+                - id: 16
+                  patient_id: 42
+                  doctor_id: 7
+                  medication: "Lisinopril"
+                  dosage: "10mg once daily"
+                  created_at: "2026-06-15T08:30:00.000Z"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
