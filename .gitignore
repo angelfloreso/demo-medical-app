@@ -1,0 +1,7 @@
+backend/app/__pycache__/
+backend/app/routers/__pycache__/
+backend/__pycache__/
+backend/medsched.db
+**/__pycache__/
+*.pyc
+*.db
